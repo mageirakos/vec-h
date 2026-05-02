@@ -1,6 +1,6 @@
 # Vec-H
 
-Artifact repository for : "To GPU or Not to GPU: Vecor Search in Relational Engines" under submission for VLDB '27
+Artifact repository for paper under submission for VLDB '27
 
 # Reproduce
 If you run into any problems contact: vmageirakos@inf.ethz.ch or open an issue
