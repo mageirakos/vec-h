@@ -1,0 +1,9 @@
+*.git export-ignore
+*.gitlab export-ignore
+*.DS_Store export-ignore
+*.gitattributes export-ignore
+/*.clang-format export-ignore
+*.gitignore export-ignore
+/.gitlab-ci.yml export-ignore
+/README.md export-ignore
+/assets export-ignore

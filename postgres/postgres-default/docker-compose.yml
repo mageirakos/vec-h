@@ -1,0 +1,26 @@
+services:
+  pgvector:
+    build:
+      context: ../postgres-scripts
+    image: pgvector-cscs:latest
+    container_name: pgvector_default
+    shm_size: '64gb'
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=1234
+      - POSTGRES_DB=vech
+      - PGDATA=/var/lib/postgresql/data
+      - PG_TUNING_CONF=/pgtuning/default.conf
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    command: ["postgres"]
+    ports:
+      - "5432:5432"
+    volumes:
+      # Persistent pg_data on host
+      - ~/postgres-scratch/pg_data:/var/lib/postgresql/data
+      # Datasets (parquet + CSV)
+      - ~/datasets:/datasets
+      # Mount maxvec for load script and query files
+      - ../:/maxvec
+      # Pgtuning configs
+      - ../postgres-scripts/pgtuning:/pgtuning

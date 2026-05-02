@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=@CMAKE_INSTALL_PREFIX@
+libdir=@CMAKE_INSTALL_FULL_LIBDIR@
+includedir=@CMAKE_INSTALL_FULL_INCLUDEDIR@
+
+Name: Maximus
+Description: A Modular Accelerated Query Engine for Data Analytics on Heterogeneous Systems
+Version: @maximus_VERSION@
+Libs: -L${libdir} -lmaximus
+Cflags: -I${includedir}

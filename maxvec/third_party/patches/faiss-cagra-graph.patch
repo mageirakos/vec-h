@@ -1,0 +1,160 @@
+--- faiss/gpu/impl/CuvsCagra.cuh	2026-03-23 20:02:01.051487862 +0000
++++ faiss/gpu/impl/CuvsCagra.cuh	2026-03-23 20:02:01.084487984 +0000
+@@ -77,6 +77,18 @@
+             float metricArg,
+             IndicesOptions indicesOptions);
+ 
++    // [PATCH] CAGRA graph cache: uint32 graph constructor
++    CuvsCagra(
++            GpuResources* resources,
++            int dim,
++            idx_t n,
++            int graph_degree,
++            const data_t* dataset,
++            const uint32_t* knn_graph_uint32,
++            faiss::MetricType metric,
++            float metricArg,
++            IndicesOptions indicesOptions);
++
+     ~CuvsCagra() = default;
+ 
+     void train(idx_t n, const data_t* x);
+--- faiss/gpu/impl/CuvsCagra.cu	2026-03-23 20:02:01.052487866 +0000
++++ faiss/gpu/impl/CuvsCagra.cu	2026-03-23 20:02:01.087487995 +0000
+@@ -164,6 +164,80 @@
+     }
+ }
+ 
++// [PATCH] CAGRA graph cache: uint32 graph constructor implementation
++template <typename data_t>
++CuvsCagra<data_t>::CuvsCagra(
++        GpuResources* resources,
++        int dim,
++        idx_t n,
++        int graph_degree,
++        const data_t* dataset,
++        const uint32_t* knn_graph_uint32,
++        faiss::MetricType metric,
++        float metricArg,
++        IndicesOptions indicesOptions)
++        : resources_(resources),
++          dim_(dim),
++          metric_(metric),
++          metricArg_(metricArg) {
++    FAISS_THROW_IF_NOT_MSG(
++            metric == faiss::METRIC_L2 || metric == faiss::METRIC_INNER_PRODUCT,
++            "CAGRA currently only supports L2 or Inner Product metric.");
++    FAISS_THROW_IF_NOT_MSG(
++            indicesOptions == faiss::gpu::INDICES_64_BIT,
++            "only INDICES_64_BIT is supported for cuVS CAGRA index");
++
++    auto dataset_on_gpu = getDeviceForAddress(dataset) >= 0;
++    auto knn_graph_on_gpu = getDeviceForAddress(knn_graph_uint32) >= 0;
++
++    FAISS_ASSERT(dataset_on_gpu == knn_graph_on_gpu);
++
++    storage_ = dataset;
++    n_ = n;
++
++    const raft::device_resources& raft_handle =
++            resources_->getRaftHandleCurrentDevice();
++
++    if (dataset_on_gpu && knn_graph_on_gpu) {
++        // D2H copy so cuVS cagra::index creates an owning device copy
++        auto knn_graph_copy =
++                raft::make_host_matrix<uint32_t, int64_t>(n, graph_degree);
++        raft_handle.sync_stream();
++        thrust::copy(
++                thrust::device_ptr<const uint32_t>(knn_graph_uint32),
++                thrust::device_ptr<const uint32_t>(
++                        knn_graph_uint32 + (n * graph_degree)),
++                knn_graph_copy.data_handle());
++
++        auto dataset_mds = raft::make_device_matrix_view<const data_t, int64_t>(
++                dataset, n, dim);
++
++        cuvs_index = std::make_shared<
++                cuvs::neighbors::cagra::index<data_t, uint32_t>>(
++                raft_handle,
++                metricFaissToCuvs(metric_, false),
++                dataset_mds,
++                raft::make_const_mdspan(knn_graph_copy.view()));
++    } else if (!dataset_on_gpu && !knn_graph_on_gpu) {
++        // Zero-copy: view directly over cached uint32 graph (no alloc, no memcpy)
++        auto knn_graph_view = raft::make_host_matrix_view<const uint32_t, int64_t>(
++                knn_graph_uint32, n, graph_degree);
++
++        auto dataset_mds = raft::make_host_matrix_view<const data_t, int64_t>(
++                dataset, n, dim);
++
++        cuvs_index = std::make_shared<
++                cuvs::neighbors::cagra::index<data_t, uint32_t>>(
++                raft_handle,
++                metricFaissToCuvs(metric_, false),
++                dataset_mds,
++                raft::make_const_mdspan(knn_graph_view));
++    } else {
++        FAISS_THROW_MSG(
++                "dataset and knn_graph must both be in device or host memory");
++    }
++}
++
+ template <typename data_t>
+ void CuvsCagra<data_t>::train(idx_t n, const data_t* x) {
+     storage_ = x;
+--- faiss/gpu/GpuIndexCagra.h	2026-03-23 20:02:01.053487869 +0000
++++ faiss/gpu/GpuIndexCagra.h	2026-03-23 20:02:01.090488006 +0000
+@@ -283,6 +283,16 @@
+     /// in the index instance
+     void copyTo(faiss::IndexHNSWCagra* index) const;
+ 
++    // [PATCH] CAGRA graph cache
++    /// Construct GPU CAGRA from pre-extracted uint32 graph + dataset.
++    /// Skips HNSW graph extraction and int64->uint32 conversion.
++    /// dataset can be host or device pointer; caller keeps it alive.
++    void copyFrom_graph(
++            const uint32_t* knn_graph_uint32,
++            const float* dataset,
++            idx_t n,
++            int graph_degree);
++
+     void reset() override;
+ 
+     std::vector<idx_t> get_knngraph() const;
+--- faiss/gpu/GpuIndexCagra.cu	2026-03-23 20:02:01.054487873 +0000
++++ faiss/gpu/GpuIndexCagra.cu	2026-03-23 20:02:01.094488021 +0000
+@@ -391,6 +391,34 @@
+     copyFrom_ex(index, NumericType::Float32);
+ }
+ 
++// [PATCH] CAGRA graph cache
++void GpuIndexCagra::copyFrom_graph(
++        const uint32_t* knn_graph_uint32,
++        const float* dataset,
++        idx_t n,
++        int graph_degree) {
++    FAISS_ASSERT(knn_graph_uint32);
++    FAISS_ASSERT(dataset);
++    numeric_type_ = NumericType::Float32;
++
++    DeviceScope scope(config_.device);
++
++    // Set base GpuIndex fields (normally done by GpuIndex::copyFrom)
++    this->ntotal = n;
++    this->is_trained = true;
++
++    index_ = std::make_shared<CuvsCagra<float>>(
++            this->resources_.get(),
++            this->d,
++            n,
++            graph_degree,
++            dataset,
++            knn_graph_uint32,
++            this->metric_type,
++            this->metric_arg,
++            INDICES_64_BIT);
++}
++
+ void GpuIndexCagra::copyTo(faiss::IndexHNSWCagra* index) const {
+     FAISS_ASSERT(
+             !std::holds_alternative<std::monostate>(index_) &&

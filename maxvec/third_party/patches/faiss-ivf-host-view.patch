@@ -1,0 +1,137 @@
+diff --git faiss/gpu/GpuIndexIVFFlat.cu faiss/gpu/GpuIndexIVFFlat.cu
+index 1266b99..5f6c63c 100644
+--- faiss/gpu/GpuIndexIVFFlat.cu
++++ faiss/gpu/GpuIndexIVFFlat.cu
+@@ -150,6 +150,48 @@ void GpuIndexIVFFlat::copyFrom(const faiss::IndexIVFFlat* index) {
+     index_->copyInvertedListsFrom(index->invlists);
+ }
+ 
++// [PATCH] IVF host view: referenceFrom implementation
++void GpuIndexIVFFlat::referenceFrom(const faiss::IndexIVFFlat* index) {
++    DeviceScope scope(config_.device);
++
++    FAISS_THROW_IF_NOT_MSG(
++        !should_use_cuvs(config_),
++        "referenceFrom requires use_cuvs=false "
++        "(cuVS IVF forces interleaved layout, incompatible with host view)");
++
++    // Copy coarse quantizer (centroids) to GPU -- small: nlist * d * 4 bytes
++    GpuIndexIVF::copyFrom(index);
++
++    // Clear and recreate the IVFFlat impl
++    index_.reset();
++    if (!should_use_cuvs(config_)) {
++        baseIndex_.reset();
++    }
++
++    if (!index->is_trained) {
++        FAISS_ASSERT(!is_trained);
++        return;
++    }
++    FAISS_ASSERT(is_trained);
++
++    // Create IVFFlat with interleavedLayout=false -- critical for format compat.
++    // translateCodesToGpu_() is a no-op when !interleavedLayout_ (IVFFlat.cu:91),
++    // so CPU and GPU use identical flat [vector][dimension] byte layout.
++    setIndex_(
++        resources_.get(), d, nlist,
++        index->metric_type, index->metric_arg,
++        false,          // no residual
++        nullptr,        // no scalar quantizer
++        false,          // interleavedLayout = false (MUST match CPU format)
++        INDICES_64_BIT, // required for direct pointer reference
++        config_.memorySpace);
++    baseIndex_ = std::static_pointer_cast<IVFBase, IVFFlat>(index_);
++    updateQuantizer();
++
++    // Reference (not copy) the CPU inverted lists -- zero-copy host view
++    index_->referenceInvertedListsFrom(index->invlists);
++}
++
+ void GpuIndexIVFFlat::copyTo(faiss::IndexIVFFlat* index) const {
+     DeviceScope scope(config_.device);
+ 
+diff --git faiss/gpu/GpuIndexIVFFlat.h faiss/gpu/GpuIndexIVFFlat.h
+index d6826cd..46ce118 100644
+--- faiss/gpu/GpuIndexIVFFlat.h
++++ faiss/gpu/GpuIndexIVFFlat.h
+@@ -67,6 +67,13 @@ class GpuIndexIVFFlat : public GpuIndexIVF {
+     /// all data in ourselves
+     void copyFrom(const faiss::IndexIVFFlat* index);
+ 
++    /// Host-view variant of copyFrom: references CPU inverted lists without
++    /// copying data. The GPU index points directly at CPU InvertedLists memory.
++    /// Requires: use_cuvs=false, ATS system.
++    /// Forces interleavedLayout=false and INDICES_64_BIT internally.
++    /// Caller must keep the source IndexIVFFlat alive for this index's lifetime.
++    void referenceFrom(const faiss::IndexIVFFlat* index);
++
+     /// Copy ourselves to the given CPU index; will overwrite all data
+     /// in the index instance
+     void copyTo(faiss::IndexIVFFlat* index) const;
+diff --git faiss/gpu/impl/IVFBase.cu faiss/gpu/impl/IVFBase.cu
+index 5f0484c..2e20152 100644
+--- faiss/gpu/impl/IVFBase.cu
++++ faiss/gpu/impl/IVFBase.cu
+@@ -332,6 +332,44 @@ void IVFBase::copyInvertedListsFrom(const InvertedLists* ivf) {
+     }
+ }
+ 
++
++// [PATCH] IVF host view: referenceInvertedListsFrom implementation
++void IVFBase::referenceInvertedListsFrom(const InvertedLists* ivf) {
++    FAISS_THROW_IF_NOT_MSG(
++        !interleavedLayout_,
++        "referenceInvertedListsFrom requires interleavedLayout=false "
++        "(CPU and GPU data formats must match for zero-copy)");
++    FAISS_THROW_IF_NOT_MSG(
++        indicesOptions_ == INDICES_64_BIT,
++        "referenceInvertedListsFrom requires INDICES_64_BIT "
++        "(direct pointer reference for index IDs)");
++
++    auto stream = resources_->getDefaultStreamCurrentDevice();
++    idx_t nlist = ivf ? ivf->nlist : 0;
++
++    for (idx_t i = 0; i < nlist; ++i) {
++        idx_t listSize = ivf->list_size(i);
++        if (listSize == 0) continue;
++
++        // Set numVecs on DeviceIVFList shells (data stays empty, no GPU alloc)
++        deviceListData_[i]->numVecs = listSize;
++        deviceListIndices_[i]->numVecs = listSize;
++
++        // Point GPU pointer arrays at host memory.
++        // On ATS systems, the GPU can dereference these host pointers directly.
++        // setAt() copies 8 bytes (the pointer value) H2D into the pointer array.
++        deviceListDataPointers_.setAt(
++            i, (void*)ivf->get_codes(i), stream);
++        deviceListIndexPointers_.setAt(
++            i, (void*)ivf->get_ids(i), stream);
++        deviceListLengths_.setAt(i, listSize, stream);
++
++        maxListLength_ = std::max(maxListLength_, listSize);
++    }
++    // NOTE: Do NOT call updateDeviceListInfo_() here. That method reads
++    // deviceListData_[i]->data.data() which is empty/null for host-view lists.
++}
++
+ void IVFBase::copyInvertedListsTo(InvertedLists* ivf) {
+     for (idx_t i = 0; i < numLists_; ++i) {
+         auto listIndices = getListIndices(i);
+diff --git faiss/gpu/impl/IVFBase.cuh faiss/gpu/impl/IVFBase.cuh
+index 1c8fc45..e6ab98b 100644
+--- faiss/gpu/impl/IVFBase.cuh
++++ faiss/gpu/impl/IVFBase.cuh
+@@ -71,6 +71,12 @@ class IVFBase {
+     /// Copy all inverted lists from a CPU representation to ourselves
+     virtual void copyInvertedListsFrom(const InvertedLists* ivf);
+ 
++    /// Reference CPU inverted lists without copying (host view / zero-copy).
++    /// Sets deviceListDataPointers_ and deviceListIndexPointers_ to host
++    /// addresses. Requires interleavedLayout=false and INDICES_64_BIT.
++    /// Caller must keep the source InvertedLists alive for the index lifetime.
++    virtual void referenceInvertedListsFrom(const InvertedLists* ivf);
++
+     /// Copy all inverted lists from ourselves to a CPU representation
+     virtual void copyInvertedListsTo(InvertedLists* ivf);
+ 

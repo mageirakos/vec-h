@@ -1,0 +1,79 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Profiler
+*.cali
+
+.DS_Store*
+*.swp
+__pycache__
+build
+exports
+doc
+.idea*
+CMakeLists.txt.user
+.vscode*
+.devcontainer
+cmake-build-debug*
+cmake-build-clang*
+cmake-build-gcc*
+
+build-debug-clang
+build-release-clang
+build-debug-gcc
+build-release-gcc
+
+.gitlab-ci-local*
+
+.cache
+
+# Doxygen
+html/
+latex/
+Doxyfile
+
+# Data
+/tests/big-vector-bench/parquet/
+
+# Patches
+third_party/patches/*.py
+
+# Temp
+/scripts/python/
+.github
+*.log
+*.err
+results.csv
+/results/plots/*
+/results/parse_caliper/*
+/results/vsds

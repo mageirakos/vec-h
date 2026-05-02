@@ -1,0 +1,74 @@
+diff -ruN raft/neighbors/dataset.hpp raft/neighbors/dataset.hpp
+--- raft/neighbors/dataset.hpp	2026-03-23 20:01:45.565430473 +0000
++++ raft/neighbors/dataset.hpp	2026-03-23 20:01:45.630430714 +0000
+@@ -25,11 +25,19 @@
+ #include <memory>
+ #include <numeric>
+ #include <type_traits>
++#include <atomic>  // [PATCH] ATS runtime control
+ 
+ #ifdef __cpp_lib_bitops
+ #include <bit>
+ #endif
+ 
++namespace raft::neighbors::detail {
++  // Runtime flag: when true, make_strided_dataset() uses ptr_attrs.type check
++  // instead of devicePointer check, forcing host data copy to GPU (data=1).
++  // When false (default), original ATS behavior: non-owning host view (data=0).
++  inline std::atomic<bool> cagra_ats_force_copy_enabled{false};  // [PATCH] ATS runtime control
++}
++
+ namespace raft::neighbors {
+ 
+ /** Two-dimensional dataset; maybe owning, maybe compressed, maybe strided. */
+@@ -145,7 +153,7 @@
+   RAFT_CUDA_TRY(cudaPointerGetAttributes(&ptr_attrs, src.data_handle()));
+   auto* device_ptr             = reinterpret_cast<value_type*>(ptr_attrs.devicePointer);
+   const uint32_t src_stride    = src.stride(0) > 0 ? src.stride(0) : src.extent(1);
+-  const bool device_accessible = device_ptr != nullptr;
++  const bool device_accessible = raft::neighbors::detail::cagra_ats_force_copy_enabled.load(std::memory_order_relaxed) ? (ptr_attrs.type == cudaMemoryTypeDevice) : (device_ptr != nullptr);  // [PATCH] ATS runtime control
+   const bool row_major         = src.stride(1) <= 1;
+   const bool stride_matches    = required_stride == src_stride;
+ 
+diff -ruN raft/neighbors/detail/cagra/utils.hpp raft/neighbors/detail/cagra/utils.hpp
+--- raft/neighbors/detail/cagra/utils.hpp	2026-03-23 20:01:45.584430543 +0000
++++ raft/neighbors/detail/cagra/utils.hpp	2026-03-23 20:01:45.651430792 +0000
+@@ -19,6 +19,7 @@
+ #include <raft/core/device_mdarray.hpp>
+ #include <raft/core/host_mdarray.hpp>
+ #include <raft/util/integer_utils.hpp>
++#include <raft/neighbors/dataset.hpp>  // [PATCH] ATS runtime control
+ 
+ #include <rmm/resource_ref.hpp>
+ 
+@@ -182,7 +183,7 @@
+     cudaPointerAttributes attr;
+     RAFT_CUDA_TRY(cudaPointerGetAttributes(&attr, host_view.data_handle()));
+     device_ptr = reinterpret_cast<T*>(attr.devicePointer);
+-    if (device_ptr == NULL) {
++    if (raft::neighbors::detail::cagra_ats_force_copy_enabled.load(std::memory_order_relaxed) ? (attr.type != cudaMemoryTypeDevice) : (device_ptr == NULL)) {  // [PATCH] ATS runtime control
+       // allocate memory and copy over
+       device_mem_.emplace(
+         raft::make_device_matrix<T, IdxT>(res, host_view.extent(0), host_view.extent(1)));
+diff -ruN cuvs/neighbors/common.hpp cuvs/neighbors/common.hpp
+--- cuvs/neighbors/common.hpp	2026-03-23 20:01:45.589430562 +0000
++++ cuvs/neighbors/common.hpp	2026-03-23 20:01:45.642430759 +0000
+@@ -25,7 +25,8 @@
+ #include <raft/core/resource/cuda_stream.hpp>
+ #include <raft/core/resources.hpp>
+ #include <raft/util/cudart_utils.hpp>   // get_device_for_address
+-#include <raft/util/integer_utils.hpp>  // rounding up
++#include <raft/util/integer_utils.hpp>
++#include <raft/neighbors/dataset.hpp>  // [PATCH] ATS runtime control  // rounding up
+ 
+ #include <cuvs/core/bitmap.hpp>
+ #include <cuvs/core/bitset.hpp>
+@@ -247,7 +248,7 @@
+   RAFT_CUDA_TRY(cudaPointerGetAttributes(&ptr_attrs, src.data_handle()));
+   auto* device_ptr             = reinterpret_cast<value_type*>(ptr_attrs.devicePointer);
+   const uint32_t src_stride    = src.stride(0) > 0 ? src.stride(0) : src.extent(1);
+-  const bool device_accessible = device_ptr != nullptr;
++  const bool device_accessible = raft::neighbors::detail::cagra_ats_force_copy_enabled.load(std::memory_order_relaxed) ? (ptr_attrs.type == cudaMemoryTypeDevice) : (device_ptr != nullptr);  // [PATCH] ATS runtime control
+   const bool row_major         = src.stride(1) <= 1;
+   const bool stride_matches    = required_stride == src_stride;
+ 

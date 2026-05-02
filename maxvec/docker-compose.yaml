@@ -1,0 +1,65 @@
+x-maximus-base: &maximus-base
+  # shm_size: '8gb' # Increase /dev/shm size if you run into shared memory issues
+  volumes:
+    - ./:/home/Maximus
+  environment:
+    - CONDA_PREFIX=/opt/conda/envs/maximus_env
+    - CMAKE_PREFIX_PATH=/opt/conda/envs/maximus_env
+    - LD_LIBRARY_PATH=/opt/conda/envs/maximus_env/lib
+    - PYTHONUNBUFFERED=1
+    # Expose all NVIDIA driver capabilities (required for nsys GPU tracing)
+    - NVIDIA_DRIVER_CAPABILITIES=all
+  ulimits:
+    # Disable core dumps
+    core:
+      soft: 0
+      hard: 0
+  deploy:
+    resources:
+      limits:
+        memory: 240G       # hard cap — prevents OOM-killer surprises
+      reservations:
+        memory: 64G        # guaranteed minimum allocation
+        devices:
+          - driver: nvidia
+            count: all
+            # compute+utility needed for nsys GPU kernel tracing; video for nvdec/nvenc if used
+            capabilities: [gpu, compute, utility, video]
+  cap_add:
+    - SYS_PTRACE   # nsys attach / ptrace-based sampling
+    - SYS_ADMIN    # perf_event_open syscall (nsys CPU/OS tracing)
+    - PERFMON      # fine-grained perf monitoring (kernel ≥ 5.8, no-op on older kernels)
+  security_opt:
+    - seccomp:unconfined
+  tty: true
+  stdin_open: true
+  restart: unless-stopped
+
+services:
+  maximus:
+    <<: *maximus-base
+    image: maxvs-dev-gpu
+    container_name: maxvs-dev-gpu
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        OPT_LEVEL: ${OPT_LEVEL:-auto}
+        PARALLEL_JOBS: ${PARALLEL_JOBS:-12}
+        BUILD_TYPE: ${BUILD_TYPE:-Release}
+
+  # Test service: separate image tag so you can test Dockerfile changes
+  # without touching the main container. Usage: make test-setup / make test-shell
+  test-maximus:
+    <<: *maximus-base
+    image: test-maxvs-dev-gpu
+    container_name: test-maxvs
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        OPT_LEVEL: ${OPT_LEVEL:-auto}
+        PARALLEL_JOBS: ${PARALLEL_JOBS:-12}
+        BUILD_TYPE: ${BUILD_TYPE:-RelWithDebInfo}
+    profiles:
+      - test  # only started when explicitly requested (not picked up by compose up)

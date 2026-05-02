@@ -1,0 +1,11 @@
+1. Clone https://github.com/harsha-simhadri/big-ann-benchmarks into related/big-ann-benchmarks
+2. Clone https://github.com/erikbern/ann-benchmarks into related/ann-benchmarks
+3. cd related/ann-benchmarks && python create_dataset.py --dataset sift-128-euclidean
+4. cd related/big-ann-benchmarks python create_dataset.py --dataset yfcc-10M   
+
+To export yfcc:
+'''
+python generate_parquet.py ../../related/big-ann-benchmarks/data/yfcc100M/base.10M.u8bin parquet/base100K.parquet -v -l 100000
+python generate_parquet.py ../../related/big-ann-benchmarks/data/yfcc100M/query.public.100K.u8bin parquet/query1K.parquet -v -l 1000
+python generate_parquet.py ../../related/big-ann-benchmarks/data/yfcc100M/GT.public.ibin parquet/GT1K.parquet -v -l 1000
+'''

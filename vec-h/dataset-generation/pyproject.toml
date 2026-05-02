@@ -1,0 +1,28 @@
+[project]
+name = "maxvs"
+version = "0.1.0"
+description = "Dataset generating project"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "duckdb>=1.4.4",
+    "polars>=1.36.1",
+    "pyarrow>=21.0.0",
+    "requests>=2.32.5",
+    "tqdm>=4.67.3",
+    "torch",
+    "transformers",
+    "sentence-transformers",
+    "accelerate",
+    "sentencepiece",
+    "Pillow",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.10",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"

@@ -1,0 +1,56 @@
+#include <maximus/operators/acero/filter_operator.hpp>
+
+namespace maximus {
+namespace acero {
+
+FilterOperator::FilterOperator(std::shared_ptr<MaximusContext> &ctx,
+                               std::shared_ptr<Schema> input_schema,
+                               std::shared_ptr<FilterProperties> properties)
+        : AbstractFilterOperator(ctx, std::move(input_schema), std::move(properties)) {
+    auto &filter = this->properties->filter_expression;
+    assert(filter && "Filter must be initialized before creating a mini node.");
+
+    // the options we need to create the engine's operator
+    auto arrow_expr = filter->get_expression();
+    auto options    = std::make_shared<arrow::acero::FilterNodeOptions>(*arrow_expr);
+
+    // initializing the engine: creates mini source, mini node and mini sink nodes
+    // creating the engine
+    proxy_operator = std::make_unique<ProxyOperator>(
+        ctx, input_schemas, std::move(options), "filter", get_id(), next_engine_type, next_op_type);
+
+    // retrieve the output schema from the engine
+    this->output_schema = proxy_operator->output_schema;
+    assert(output_schema);
+
+    set_device_type(DeviceType::CPU);
+    set_engine_type(EngineType::ACERO);
+
+    proxy_operator->operator_name = name();
+}
+
+void FilterOperator::on_add_input(DeviceTablePtr device_input, int port) {
+    assert(device_input);
+    assert(proxy_operator && "The proxy operator must be initialized before adding input.");
+
+    // pass the batch through the engine
+    proxy_operator->on_add_input(device_input, port);
+}
+
+void FilterOperator::on_no_more_input(int port) {
+    assert(proxy_operator && "The proxy operator must be initialized before adding input.");
+
+    // inform the engine that there is no more input
+    proxy_operator->on_no_more_input(port);
+}
+
+bool FilterOperator::has_more_batches_impl(bool blocking) {
+    return proxy_operator->has_more_batches_impl(blocking);
+}
+
+DeviceTablePtr FilterOperator::export_next_batch_impl() {
+    return std::move(proxy_operator->export_next_batch_impl());
+}
+
+}  // namespace acero
+}  // namespace maximus
