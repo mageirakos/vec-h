@@ -1,6 +1,6 @@
 # Vec-H
 
-Artifact repository for paper under submission for VLDB '27
+Artifact repository for paper under submission
 
 # Reproduce
 If you run into any problems contact: vmageirakos@inf.ethz.ch or open an issue
@@ -42,7 +42,7 @@ For more details: `./maxvec/README.md`.
 Note: `vsds` is what we used call the now `vec-h`, just in case you see it in the code.
 
 # Credit 
-For this work: Vasilis Mageirakos, Joel André, Mako Kabić, Bowen Wu, Yannis Chornis, Gustavo Alonso (Systems Group ETH Zürich : https://systems.ethz.ch/ )
+For this work: Vasilis Mageirakos, Joel André, Marko Kabić, Bowen Wu, Yannis Chronis, Gustavo Alonso (Systems Group ETH Zürich : https://systems.ethz.ch/ )
 
 Prior code/data/work we used or extended:
 - Maximus : https://gitlab.inf.ethz.ch/PUB-SYSTEMS/eth-dataprocessing/Maximus
