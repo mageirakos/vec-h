@@ -1,0 +1,23 @@
+[project]
+name = "vech-postgres"
+version = "0.1.0"
+description = "Host-side pgvector benchmark client (vech_benchmark + recall + plan parser)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "psycopg[binary]>=3.1",
+    "pgvector>=0.3",
+    "pyarrow>=17.0",
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "tqdm>=4.66",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.10",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"

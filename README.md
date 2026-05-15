@@ -5,9 +5,16 @@ Artifact repository for paper under submission
 # Reproduce
 If you run into any problems contact: vmageirakos@inf.ethz.ch or open an issue
 ## Dataset (Vec-H)
-- What we used in paper: https://polybox.ethz.ch/index.php/s/tcFK2AHaMaBKHyw
 - Queries found under: `vec-h/queries/*`
 - To generate a new version of the dataset from scratch follow: `vec-h/dataset-generation/README.md`
+
+What we used in paper: https://polybox.ethz.ch/index.php/s/tcFK2AHaMaBKHyw
+```shell
+mkdir data
+wget "https://polybox.ethz.ch/index.php/s/tcFK2AHaMaBKHyw/download" -O "data/vech-sf1.zip"
+unzip "data/vech-sf1.zip" -d "data" 
+rm "data/vech-sf1.zip"
+```
 
 ## Postgres
 

@@ -11,6 +11,7 @@ services:
       - POSTGRES_DB=vech
       - PGDATA=/var/lib/postgresql/data
       - PG_TUNING_CONF=/pgtuning/default.conf
+      - PGHOST=/tmp
     entrypoint: ["/usr/local/bin/entrypoint.sh"]
     command: ["postgres"]
     ports:
@@ -18,8 +19,8 @@ services:
     volumes:
       # Persistent pg_data on host
       - ~/postgres-scratch/pg_data:/var/lib/postgresql/data
-      # Datasets (parquet + CSV)
-      - ~/datasets:/datasets
+      # Datasets (parquet + CSV) — repo-root data/ (relative to this file)
+      - ../../data:/datasets
       # Mount maxvec for load script and query files
       - ../:/maxvec
       # Pgtuning configs

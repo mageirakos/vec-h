@@ -453,10 +453,22 @@ def print_summary() -> None:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+def report_scale_factor(tables: dict[str, pl.DataFrame]) -> None:
+    """Derive the TPC-H scale factor from table cardinalities (not from vech —
+    vech row counts are driven by the Amazon dataset, not SF)."""
+    for key, base in [("tpch/part", 200_000), ("tpch/customer", 150_000)]:
+        if key in tables:
+            n = len(tables[key])
+            info(f"Derived SF from {key}: {n:,} / {base:,} = {n / base:g}")
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Validate the VECH + TPC-H dataset.")
     p.add_argument("--data-dir", type=Path, default=Path("./data"),
                    help="Root data directory (default: ./data)")
+    p.add_argument("--tpch-dir", type=Path, default=None,
+                   help="Dir containing TPC-H *.parquet files "
+                        "(default: <data-dir>/tpch-sf1/parquet)")
     return p.parse_args()
 
 
@@ -466,9 +478,10 @@ def main() -> None:
 
     vech_parquet = data_dir / "vech" / "parquet"
     vech_csv     = data_dir / "vech"
-    tpch         = data_dir / "tpch-sf0.001"
+    tpch         = args.tpch_dir or data_dir / "tpch-sf1" / "parquet"
 
     print(f"\n{BOLD}Validating dataset under: {data_dir.resolve()}{RESET}")
+    print(f"{BOLD}TPC-H dir: {tpch}{RESET}")
 
     check_files(vech_parquet, vech_csv, tpch)
 
@@ -479,6 +492,7 @@ def main() -> None:
         sys.exit(1)
 
     counts = check_row_counts(tables)
+    report_scale_factor(tables)
     check_csv_parity(tables, counts)
     check_schema(tables)
     check_nulls(tables)

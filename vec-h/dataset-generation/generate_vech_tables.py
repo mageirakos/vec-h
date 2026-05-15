@@ -302,8 +302,6 @@ def write_outputs(
     config,
 ) -> None:
     n = config.n_output_files
-    sinks = []
-    paths = []
 
     lf_reviews       = _enforce_schema(lf_reviews,       REVIEWS_SCHEMA, queries=False)
     lf_reviews_query = _enforce_schema(lf_reviews_query, REVIEWS_SCHEMA, queries=True)
@@ -313,47 +311,45 @@ def write_outputs(
     def _drop_embeddings(lf: pl.LazyFrame) -> pl.LazyFrame:
         return lf.drop([c for c in lf.collect_schema().names() if c in _EMBEDDING_COLS])
 
-    def add_parquet(lf, path):
-        paths.append(path)
-        sinks.append(lf.sink_parquet(path, compression="snappy", lazy=True))
+    def write_one(lf, path, **kwargs):
+        logger.info(f"  Writing {path}")
+        if str(path).endswith(".parquet"):
+            lf.sink_parquet(path, compression="snappy")
+        else:
+            lf.sink_csv(path, **kwargs)
 
-    def add_csv(lf, path, **kwargs):
-        paths.append(path)
-        sinks.append(lf.sink_csv(path, lazy=True, **kwargs))
-
+    # Write one table at a time so only one embedding column set is in flight.
+    # reviews (with embeddings) is ~20 GB; doing all sinks in parallel via
+    # pl.collect_all() caused OOM on DGX.
     if config.output_dir_parquet:
         config.output_dir_parquet.mkdir(parents=True, exist_ok=True)
         d = config.output_dir_parquet
         for lf_slice, sfx in _split(lf_reviews, n):
-            add_parquet(lf_slice, d / f"reviews{sfx}.parquet")
-        add_parquet(lf_reviews_query, d / "reviews_queries.parquet")
+            write_one(lf_slice, d / f"reviews{sfx}.parquet")
+        write_one(lf_reviews_query, d / "reviews_queries.parquet")
         for lf_slice, sfx in _split(lf_images, n):
-            add_parquet(lf_slice, d / f"images{sfx}.parquet")
-        add_parquet(lf_images_query, d / "images_queries.parquet")
+            write_one(lf_slice, d / f"images{sfx}.parquet")
+        write_one(lf_images_query, d / "images_queries.parquet")
 
     if config.output_dir_csv:
         config.output_dir_csv.mkdir(parents=True, exist_ok=True)
         d = config.output_dir_csv
         for lf_slice, sfx in _split(_drop_embeddings(lf_reviews), n):
-            add_csv(lf_slice, d / f"reviews{sfx}.csv")
-        add_csv(_drop_embeddings(lf_reviews_query), d / "reviews_queries.csv")
+            write_one(lf_slice, d / f"reviews{sfx}.csv")
+        write_one(_drop_embeddings(lf_reviews_query), d / "reviews_queries.csv")
         for lf_slice, sfx in _split(_drop_embeddings(lf_images), n):
-            add_csv(lf_slice, d / f"images{sfx}.csv")
-        add_csv(_drop_embeddings(lf_images_query), d / "images_queries.csv")
+            write_one(lf_slice, d / f"images{sfx}.csv")
+        write_one(_drop_embeddings(lf_images_query), d / "images_queries.csv")
 
     if config.output_dir_tbl:
         config.output_dir_tbl.mkdir(parents=True, exist_ok=True)
         d = config.output_dir_tbl
         for lf_slice, sfx in _split(_drop_embeddings(lf_reviews), n):
-            add_csv(lf_slice, d / f"reviews{sfx}.tbl", separator="|")
-        add_csv(_drop_embeddings(lf_reviews_query), d / "reviews_queries.tbl", separator="|")
+            write_one(lf_slice, d / f"reviews{sfx}.tbl", separator="|")
+        write_one(_drop_embeddings(lf_reviews_query), d / "reviews_queries.tbl", separator="|")
         for lf_slice, sfx in _split(_drop_embeddings(lf_images), n):
-            add_csv(lf_slice, d / f"images{sfx}.tbl", separator="|")
-        add_csv(_drop_embeddings(lf_images_query), d / "images_queries.tbl", separator="|")
-
-    for p in paths:
-        logger.info(f"  Writing {p}")
-    pl.collect_all(sinks)
+            write_one(lf_slice, d / f"images{sfx}.tbl", separator="|")
+        write_one(_drop_embeddings(lf_images_query), d / "images_queries.tbl", separator="|")
 
 
 def run_pipeline(config):

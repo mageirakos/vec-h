@@ -10,6 +10,7 @@
 #   ./run_pg_vech.sh 1                    # SF1, all 3 phases (hnsw, ivf, enn)
 #   ./run_pg_vech.sh 1 hnsw,ivf           # SF1, only hnsw + ivf
 #   ./run_pg_vech.sh 1 hnsw               # SF1, only hnsw
+#   ./run_pg_vech.sh 1 hnsw,ivf,ivf4096,enn   # opt-in: add IVF4096 (nlist=4096); off by default
 #
 # Prereq:
 #   - postgres-default container running (`make setup` in postgres-default/)
@@ -27,16 +28,23 @@ SF="${1:-1}"
 #            nothing; btree primary keys / non-vector indexes are untouched).
 INDEXES="${2:-hnsw,ivf,enn}"
 
-# Database name on the new container (from postgres-default/docker-compose.yml)
-# DB_NAME="vech"
-# Database name on the old container (legacy, hardcoded SF1).
-DB_NAME="vech_sf1_industrial_and_scientific_plain"
+# DB_NAME / DATASET are env-overridable and default to the Makefile defaults,
+# so `make load-data` then `./run_pg_vech.sh` Just Works:
+#   DB_NAME=vech_sf1 DATASET=vech-sf1 ./run_pg_vech.sh 1
+DB_NAME="${DB_NAME:-vech}"
+DATASET="${DATASET:-vech-industrial_and_scientific-sf_1}"
 
 # q11_end is by far the longest (~12 min at SF1) — keep it last.
 QUERIES=(q2_start q10_mid q13_mid q15_end q16_start q18_mid q19_start q11_end)
 
 # Where vech_benchmark.py lives (host-side, not in container — we run client from host)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Query vectors are read from parquet on the HOST (benchmark runs client-side).
+# (SCRIPT_DIR = postgres-default/ → ../../data = repo-root/data)
+DATA_DIR="${DATA_DIR:-$SCRIPT_DIR/../../data/$DATASET}"
+REVIEWS_QUERIES_FILE="${REVIEWS_QUERIES_FILE:-$DATA_DIR/reviews_queries.parquet}"
+IMAGES_QUERIES_FILE="${IMAGES_QUERIES_FILE:-$DATA_DIR/images_queries.parquet}"
 BENCH_SCRIPT="${SCRIPT_DIR}/../postgres-scripts/vech_benchmark.py"
 
 # Output root: under postgres-default/results/<DATE>-default/
@@ -64,6 +72,9 @@ log "FULL PGVECTOR RUN ON DEFAULT"
 log "  SF:        $SF"
 log "  INDEXES:   $INDEXES"
 log "  DB:        $DB_NAME"
+log "  DATASET:   $DATASET"
+log "  Queries:   $REVIEWS_QUERIES_FILE"
+log "             $IMAGES_QUERIES_FILE"
 log "  Output:    $RESULTS_BASE"
 log "=========================================="
 
@@ -93,6 +104,11 @@ run_phase() {
             python3 "$BENCH_SCRIPT" build-indexes --sf "$SF" --index ivfflat --clean \
                 --db_name "$DB_NAME" 2>&1 | tee -a "$ORCH_LOG"
             ;;
+        ivf4096)
+            log "[$phase] Building IVF4096 (nlist=4096, clean: drops any existing vector indexes first)"
+            python3 "$BENCH_SCRIPT" build-indexes --sf "$SF" --index ivfflat --clean \
+                --n_lists 4096 --db_name "$DB_NAME" 2>&1 | tee -a "$ORCH_LOG"
+            ;;
         *)
             log "ERROR: unknown phase '$phase'"
             exit 1
@@ -114,6 +130,8 @@ run_phase() {
         --timeout_min 20 \
         --save_csv --save_plans \
         --db_name "$DB_NAME" \
+        --reviews_queries_file "$REVIEWS_QUERIES_FILE" \
+        --images_queries_file "$IMAGES_QUERIES_FILE" \
         --output_dir "$RESULTS_BASE" \
         2>&1 | tee -a "$ORCH_LOG"
     set -o pipefail
@@ -128,7 +146,8 @@ for phase in "${PHASES[@]}"; do
         enn)  run_phase enn  enn ;;
         hnsw) run_phase hnsw HNSW32 ;;
         ivf)  run_phase ivf  IVF1024 ;;
-        *)    log "ERROR: unknown phase '$phase' (valid: enn, hnsw, ivf)" && exit 1 ;;
+        ivf4096) run_phase ivf4096 IVF4096 ;;
+        *)    log "ERROR: unknown phase '$phase' (valid: enn, hnsw, ivf, ivf4096)" && exit 1 ;;
     esac
 done
 

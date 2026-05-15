@@ -1,5 +1,5 @@
 [project]
-name = "maxvs"
+name = "vech-dataset"
 version = "0.1.0"
 description = "Dataset generating project"
 readme = "README.md"

@@ -20,8 +20,12 @@ set -euo pipefail
 
 # --- Configuration ---
 SF="${1:-1}"
+# DATASET = directory name under $SCRATCH/datasets/
+# $SCRATCH stays the base on daint). Override via env:
+#   DATASET=vech-sf1 DB_NAME=vech_sf1 sbatch setup_pgvector_cscs.sh
+DATASET="${DATASET:-vech-industrial_and_scientific-sf_1}"
 PGDATA="$SCRATCH/pg_data"
-DATASETS="$SCRATCH/datasets/sf${SF}"
+DATASETS="$SCRATCH/datasets/$DATASET"
 
 # --- Repo-relative paths (work inside the container because /capstor is mounted) ---
 # Under sbatch, $0 points at the spooled copy under /var/spool/slurmd/, so
@@ -37,14 +41,17 @@ fi
 LOAD_SCRIPT="${SCRIPT_DIR}/../load_to_postgres_database.py"
 PG_TUNING_CONF="${SCRIPT_DIR}/../postgres-scripts/pgtuning/cscs-gh200.conf"
 
+DB_NAME="${DB_NAME:-vech}"
 export PGDATA PG_TUNING_CONF
 export POSTGRES_USER=postgres
 export POSTGRES_PASSWORD=1234
-export POSTGRES_DB=vech
+export POSTGRES_DB="$DB_NAME"
 
 echo "=========================================="
 echo "PGVECTOR SETUP: $(date)"
 echo "  SF:       $SF"
+echo "  DATASET:  $DATASET"
+echo "  DB_NAME:  $DB_NAME"
 echo "  PGDATA:   $PGDATA"
 echo "  DATASETS: $DATASETS"
 echo "=========================================="
@@ -60,11 +67,11 @@ echo "=========================================="
         --db_host localhost \
         --db_user $POSTGRES_USER \
         --db_password $POSTGRES_PASSWORD \
-        --tpch_dir $DATASETS/tpch \
-        --reviews_file $DATASETS/industrial_and_scientific_sf${SF}_reviews.parquet \
-        --images_file $DATASETS/industrial_and_scientific_sf${SF}_images.parquet \
-        --reviews_queries_file $DATASETS/industrial_and_scientific_sf${SF}_reviews_queries.parquet \
-        --images_queries_file $DATASETS/industrial_and_scientific_sf${SF}_images_queries.parquet
+        --tpch_dir $DATASETS \
+        --reviews_file $DATASETS/reviews.parquet \
+        --images_file $DATASETS/images.parquet \
+        --reviews_queries_file $DATASETS/reviews_queries.parquet \
+        --images_queries_file $DATASETS/images_queries.parquet
 
     echo '--- Running ANALYZE ---'
     psql -U $POSTGRES_USER -d $POSTGRES_DB -c 'ANALYZE;'

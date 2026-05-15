@@ -31,6 +31,7 @@
 #   sbatch run_cscs_pg_vech.sh                  # SF1, all 3 phases (hnsw, ivf, enn)
 #   sbatch run_cscs_pg_vech.sh 1 hnsw,ivf       # SF1, only hnsw + ivf
 #   sbatch run_cscs_pg_vech.sh 1 hnsw           # SF1, only hnsw
+#   sbatch run_cscs_pg_vech.sh 1 hnsw,ivf,ivf4096,enn  # opt-in: add IVF4096; off by default
 #
 # --- cscs-gh200 (Alps / Daint) NUMA pinning ---
 # We run on cores 0-71 (NUMA node 0). Both postgres backends and the python
@@ -60,15 +61,15 @@ SF="${1:-1}"
 INDEXES="${2:-hnsw,ivf,enn}"
 
 SYSTEM="cscs-gh200"
-DB_NAME="vech" 
+DB_NAME="${DB_NAME:-vech}"
+DATASET="${DATASET:-vech-industrial_and_scientific-sf_1}"
 
-# --- Per-SF dataset paths on $SCRATCH (where we rsynced everything) ---
-# Passed into vech_benchmark.py via --reviews_queries_file / --images_queries_file
-# so it doesn't fall back to the hardcoded ~/datasets/amazon-23/final_parquet/
-# default that only exists on the default deployment, not daint.
-DATASETS="$SCRATCH/datasets/sf${SF}"
-REVIEWS_QUERIES_FILE="$DATASETS/industrial_and_scientific_sf${SF}_reviews_queries.parquet"
-IMAGES_QUERIES_FILE="$DATASETS/industrial_and_scientific_sf${SF}_images_queries.parquet"
+# --- Dataset dir on $SCRATCH (where we rsynced everything) ---
+# Query parquet is passed into vech_benchmark.py via --reviews_queries_file /
+# --images_queries_file so it doesn't fall back to the hardcoded
+DATASETS="$SCRATCH/datasets/$DATASET"
+REVIEWS_QUERIES_FILE="${REVIEWS_QUERIES_FILE:-$DATASETS/reviews_queries.parquet}"
+IMAGES_QUERIES_FILE="${IMAGES_QUERIES_FILE:-$DATASETS/images_queries.parquet}"
 
 # --- Repo-relative paths (work inside the container because /capstor is mounted) ---
 # Under sbatch, $0 points at the spooled copy under /var/spool/slurmd/, so
@@ -178,6 +179,11 @@ run_phase() {
             python3 \"\$BENCH_SCRIPT\" build-indexes --sf \"\$SF\" --index ivfflat --clean \\
                 --db_name \"\$DB_NAME\" 2>&1 | tee -a \"\$ORCH_LOG\"
             ;;
+        ivf4096)
+            log \"[\$phase] Building IVF4096 (nlist=4096, clean: drops any existing vector indexes first)\"
+            python3 \"\$BENCH_SCRIPT\" build-indexes --sf \"\$SF\" --index ivfflat --clean \\
+                --n_lists 4096 --db_name \"\$DB_NAME\" 2>&1 | tee -a \"\$ORCH_LOG\"
+            ;;
         *)
             log \"ERROR: unknown phase '\$phase'\"
             exit 1
@@ -214,7 +220,8 @@ for phase in \"\${PHASES[@]}\"; do
         enn)  run_phase enn  enn ;;
         hnsw) run_phase hnsw HNSW32 ;;
         ivf)  run_phase ivf  IVF1024 ;;
-        *)    log \"ERROR: unknown phase '\$phase' (valid: enn, hnsw, ivf)\" && exit 1 ;;
+        ivf4096) run_phase ivf4096 IVF4096 ;;
+        *)    log \"ERROR: unknown phase '\$phase' (valid: enn, hnsw, ivf, ivf4096)\" && exit 1 ;;
     esac
 done
 

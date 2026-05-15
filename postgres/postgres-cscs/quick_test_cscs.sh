@@ -36,11 +36,13 @@
 set -euo pipefail
 
 SF="${1:-1}"
-DB_NAME="vech"
+# DATASET/DB_NAME: same knobs as postgres-default, $SCRATCH stays the base.
+DB_NAME="${DB_NAME:-vech}"
+DATASET="${DATASET:-vech-industrial_and_scientific-sf_1}"
 SYSTEM="cscs-gh200"
-DATASETS="$SCRATCH/datasets/sf${SF}"
-REVIEWS_QUERIES_FILE="$DATASETS/industrial_and_scientific_sf${SF}_reviews_queries.parquet"
-IMAGES_QUERIES_FILE="$DATASETS/industrial_and_scientific_sf${SF}_images_queries.parquet"
+DATASETS="$SCRATCH/datasets/$DATASET"
+REVIEWS_QUERIES_FILE="${REVIEWS_QUERIES_FILE:-$DATASETS/reviews_queries.parquet}"
+IMAGES_QUERIES_FILE="${IMAGES_QUERIES_FILE:-$DATASETS/images_queries.parquet}"
 
 # --- Repo-relative paths (same SLURM_SUBMIT_DIR pattern as the other scripts) ---
 if [ -n "${SLURM_SUBMIT_DIR:-}" ]; then

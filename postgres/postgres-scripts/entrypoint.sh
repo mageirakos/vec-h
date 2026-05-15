@@ -19,8 +19,10 @@ set -euo pipefail
 # to expose them. Some enroot/pyxis launch paths (Alps daint) drop that
 # augmentation, so re-add it here explicitly. Glob across major versions so
 # this keeps working when the base image bumps from pg17 → pg18 etc.
+PG_BIN=""
 for _pgbin in /usr/lib/postgresql/*/bin; do
     if [ -d "$_pgbin" ] && [ -x "$_pgbin/initdb" ]; then
+        PG_BIN="$_pgbin"
         export PATH="$_pgbin:$PATH"
         break
     fi
@@ -55,7 +57,11 @@ fi
 
 # Helper: run a command as the postgres-owning user
 pg_run() {
-    $RUN_AS "$1"
+    if [ -n "$PG_BIN" ]; then
+        $RUN_AS "export PATH='$PG_BIN':\$PATH; $1"
+    else
+        $RUN_AS "$1"
+    fi
 }
 
 # --- Cleanup on exit ---
@@ -80,7 +86,7 @@ fi
 # --- Init or start ---
 if [ ! -f "$PGDATA/PG_VERSION" ]; then
     echo "=== Initializing new database cluster ==="
-    pg_run "initdb -D '$PGDATA' --username='$POSTGRES_USER' --pwfile=<(echo '$POSTGRES_PASSWORD')"
+    pg_run "initdb -D '$PGDATA' --username='$POSTGRES_USER' --pwfile=<(echo '$POSTGRES_PASSWORD') --encoding=UTF8 --locale=C"
 
     # Apply tuning config
     if [ -n "${PG_TUNING_CONF:-}" ] && [ -f "$PG_TUNING_CONF" ]; then

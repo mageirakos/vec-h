@@ -1533,6 +1533,7 @@ def connect(args) -> psycopg.Connection:
         host=args.db_host,
         port=args.db_port,
         autocommit=True,
+        client_encoding="utf-8",
     )
     register_vector(conn)
     return conn
